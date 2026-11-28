@@ -35,6 +35,8 @@ public class TagHandler : MonoBehaviour
     [Tooltip("Opcional: el panel del nombre, para ocultarlo cuando nadie habla")]
     [SerializeField] private GameObject cajaNombre;
     [SerializeField] private TMP_Text textoDialogo;
+    [Tooltip("Speakers que NO muestran caja de nombre (narración de Oliver)")]
+    [SerializeField] private List<string> idsSinCajaDeNombre = new List<string> { "oliver_vo" };
 
     [Header("Imágenes")]
     [SerializeField] private Image fondo;
@@ -173,9 +175,14 @@ public class TagHandler : MonoBehaviour
             nombre = id;
         }
 
+        // La voz en off (_vo) siempre va en itálica
+        textoDialogo.fontStyle = id.EndsWith("_vo") ? FontStyles.Italic : FontStyles.Normal;
+
+        // Tarjeta "Caja de texto": cuando narra Oliver no aparece caja de nombre
+        if (idsSinCajaDeNombre.Contains(id)) return; // se queda oculta (LimpiarSpeaker ya la ocultó)
+
         textoNombre.text = nombre;
         if (cajaNombre != null) cajaNombre.SetActive(true);
-        textoDialogo.fontStyle = id.EndsWith("_vo") ? FontStyles.Italic : FontStyles.Normal;
     }
 
     private void LimpiarSpeaker()

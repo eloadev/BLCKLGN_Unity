@@ -2,9 +2,13 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
 using TMPro;
 using Ink.Runtime;
 using Ink.UnityIntegration;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 
 // =====================================================
 // InkManager — BLCKLGN
@@ -12,15 +16,20 @@ using Ink.UnityIntegration;
 // Paso 5.3: le pasa los tags de cada línea al TagHandler.
 // Paso 5.4 (parte de ejecución): manda a la consola los errores
 // que ocurran mientras se juega.
+// Tarjeta "Caja de texto": avanzar con clic y con barra espaciadora.
+// Tarjeta "Efecto máquina de escribir": el texto sale letra por letra;
+// un clic a media línea la completa y un clic con la línea completa avanza.
 //
 // Qué hace:
 //   1. Al iniciar, carga main.ink y muestra la primera línea.
-//   2. Cada vez que se llama Avanzar() (clic en BotonAvanzar),
-//      pide la siguiente línea a Ink.
+//   2. Cada vez que se llama Avanzar() (clic en BotonAvanzar o Espacio):
+//      - si la línea se está escribiendo, la completa;
+//      - si ya está completa, pide la siguiente línea a Ink.
 //   3. Le manda los tags al TagHandler (fondo, nombre, sonido...).
 //   4. Si la línea empieza con @ (línea de acción), no la muestra
 //      y avanza sola, esperando lo que diga su #wait.
-//   5. Si hay opciones, crea un botón por cada una.
+//   5. Si hay opciones, crea un botón por cada una cuando la línea
+//      termina de escribirse.
 // =====================================================
 public class InkManager : MonoBehaviour
 {
@@ -33,6 +42,8 @@ public class InkManager : MonoBehaviour
 
     [Header("UI de diálogo")]
     [SerializeField] private TMP_Text textoDialogo;
+    [Tooltip("El componente EfectoMaquinaEscribir que está en TextoDialogo")]
+    [SerializeField] private EfectoMaquinaEscribir maquinaEscribir;
     [SerializeField] private Button botonAvanzar;
 
     [Header("UI de opciones")]
@@ -60,6 +71,11 @@ public class InkManager : MonoBehaviour
             Debug.LogError("[Ink] Falta asignar el TagHandler en el InkManager.");
             return;
         }
+        if (maquinaEscribir == null)
+        {
+            Debug.LogError("[Ink] Falta asignar Maquina Escribir en el InkManager (el componente que está en TextoDialogo).");
+            return;
+        }
 
         try
         {
@@ -80,17 +96,49 @@ public class InkManager : MonoBehaviour
                 Debug.LogError("[Ink] Error en el guion: " + mensaje);
         };
 
-        botonAvanzar.onClick.AddListener(Avanzar);
+        botonAvanzar.onClick.AddListener(ClicAvanzar);
         LimpiarOpciones();
         Avanzar(); // muestra la primera línea
     }
 
     // ----------------------------------------------------
-    // 2. PEDIR LA SIGUIENTE LÍNEA
+    // ENTRADA: clic y barra espaciadora
+    // ----------------------------------------------------
+    private void Update()
+    {
+        if (EspacioPresionado()) Avanzar();
+    }
+
+    private bool EspacioPresionado()
+    {
+#if ENABLE_INPUT_SYSTEM
+        return Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame;
+#else
+        return Input.GetKeyDown(KeyCode.Space);
+#endif
+    }
+
+    private void ClicAvanzar()
+    {
+        // Si el botón se queda "seleccionado", la barra espaciadora también lo
+        // activaría y avanzaría dos veces. Por eso lo deseleccionamos.
+        if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(null);
+        Avanzar();
+    }
+
+    // ----------------------------------------------------
+    // 2. AVANZAR / PEDIR LA SIGUIENTE LÍNEA
     // ----------------------------------------------------
     public void Avanzar()
     {
         if (story == null || esperandoEleccion || bloqueado) return;
+
+        // Clic a media línea: la completamos en vez de saltar
+        if (maquinaEscribir.EstaEscribiendo)
+        {
+            maquinaEscribir.Completar();
+            return;
+        }
 
         if (!story.canContinue)
         {
@@ -107,17 +155,17 @@ public class InkManager : MonoBehaviour
         // 4. Línea de acción (@): no se muestra, avanza sola
         if (linea.StartsWith("@"))
         {
-            textoDialogo.text = "";
+            maquinaEscribir.Limpiar();
             if (espera > 0f) StartCoroutine(AvanzarDespuesDe(espera));
             else Avanzar();
             return;
         }
 
-        textoDialogo.text = linea;
-
-        // 5. Si después de esta línea vienen opciones, las mostramos
-        if (!story.canContinue && story.currentChoices.Count > 0)
-            MostrarOpciones();
+        // 5. Escribir la línea. Si después vienen opciones, aparecen
+        //    cuando la línea termina de escribirse.
+        bool vienenOpciones = !story.canContinue && story.currentChoices.Count > 0;
+        if (vienenOpciones) maquinaEscribir.Mostrar(linea, MostrarOpciones);
+        else maquinaEscribir.Mostrar(linea);
     }
 
     private IEnumerator AvanzarDespuesDe(float segundos)
@@ -151,6 +199,7 @@ public class InkManager : MonoBehaviour
         story.ChooseChoiceIndex(indice);
         esperandoEleccion = false;
         LimpiarOpciones();
+        if (EventSystem.current != null) EventSystem.current.SetSelectedGameObject(null);
         Avanzar();
     }
 
@@ -167,5 +216,6 @@ public class InkManager : MonoBehaviour
     {
         Debug.Log("[Ink] Fin de la historia.");
         botonAvanzar.interactable = false;
+        enabled = false; // deja de escuchar la barra espaciadora
     }
 }
